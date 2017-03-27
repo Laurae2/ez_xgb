@@ -1,4 +1,4 @@
-#' Contruct xgb.DMatrix object
+#' Construct xgb.DMatrix object
 #' 
 #' Contruct xgb.DMatrix object from dense matrix, sparse matrix 
 #' or local file (that was created previously by saving an \code{xgb.DMatrix}).
@@ -20,6 +20,9 @@
 xgb.DMatrix <- function(data, info = list(), missing = NA, ...) {
   cnames <- NULL
   if (typeof(data) == "character") {
+    if (length(data) > 1)
+      stop("'data' has class 'character' and length ", length(data),
+           ".\n  'data' accepts either a numeric matrix or a single filename.")
     handle <- .Call("XGDMatrixCreateFromFile_R", data, as.integer(FALSE),
                     PACKAGE = "xgboost")
   } else if (is.matrix(data)) {

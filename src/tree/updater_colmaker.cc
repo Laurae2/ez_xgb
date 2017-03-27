@@ -159,7 +159,7 @@ class ColMaker: public TreeUpdater {
         }
         unsigned n = static_cast<unsigned>(param.colsample_bytree * feat_index.size());
         std::shuffle(feat_index.begin(), feat_index.end(), common::GlobalRandom());
-        CHECK_GT(n, 0)
+        CHECK_GT(n, 0U)
             << "colsample_bytree=" << param.colsample_bytree
             << " is too small that no feature can be included";
         feat_index.resize(n);
@@ -628,7 +628,7 @@ class ColMaker: public TreeUpdater {
       if (param.colsample_bylevel != 1.0f) {
         std::shuffle(feat_set.begin(), feat_set.end(), common::GlobalRandom());
         unsigned n = static_cast<unsigned>(param.colsample_bylevel * feat_index.size());
-        CHECK_GT(n, 0)
+        CHECK_GT(n, 0U)
             << "colsample_bylevel is too small that no feature can be included";
         feat_set.resize(n);
       }
@@ -670,9 +670,8 @@ class ColMaker: public TreeUpdater {
       #pragma omp parallel for schedule(static)
       for (bst_omp_uint i = 0; i < ndata; ++i) {
         const bst_uint ridx = rowset[i];
-        if (ridx >= position.size()) {
-          LOG(INFO) << "ridx exceed bound\n";
-        }
+        CHECK_LT(ridx, position.size())
+            << "ridx exceed bound " << "ridx="<<  ridx << " pos=" << position.size();
         const int nid = this->DecodePosition(ridx);
         if (tree[nid].is_leaf()) {
           // mark finish when it is not a fresh leaf
@@ -785,16 +784,13 @@ class DistColMaker : public ColMaker<TStats, TConstraint> {
               DMatrix* dmat,
               const std::vector<RegTree*> &trees) override {
     TStats::CheckInfo(dmat->info());
-    CHECK_EQ(trees.size(), 1) << "DistColMaker: only support one tree at a time";
+    CHECK_EQ(trees.size(), 1U) << "DistColMaker: only support one tree at a time";
     // build the tree
     builder.Update(gpair, dmat, trees[0]);
     //// prune the tree, note that pruner will sync the tree
     pruner->Update(gpair, dmat, trees);
     // update position after the tree is pruned
     builder.UpdatePosition(dmat, *trees[0]);
-  }
-  const int* GetLeafPosition() const override {
-    return builder.GetLeafPosition();
   }
 
  private:
@@ -950,11 +946,6 @@ class TreeUpdaterSwitch : public TreeUpdater {
               const std::vector<RegTree*>& trees) override {
     CHECK(inner_ != nullptr);
     inner_->Update(gpair, data, trees);
-  }
-
-  const int* GetLeafPosition() const override {
-    CHECK(inner_ != nullptr);
-    return inner_->GetLeafPosition();
   }
 
  private:
