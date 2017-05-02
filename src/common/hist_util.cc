@@ -163,7 +163,7 @@ void GHistBuilder::BuildHist(const std::vector<bst_gpair>& gpair,
   std::fill(data_.begin(), data_.end(), GHistEntry());
   stat_buf_.resize(row_indices.size());
 
-  const int K = 8;  // loop unrolling factor
+  const int K = 64;  // loop unrolling factor
   const bst_omp_uint nthread = static_cast<bst_omp_uint>(this->nthread_);
   const bst_omp_uint nrows = row_indices.end - row_indices.begin;
   const bst_omp_uint rest = nrows % K;
@@ -188,7 +188,7 @@ void GHistBuilder::BuildHist(const std::vector<bst_gpair>& gpair,
     stat_buf_[i] = stat;
   }
 
-  #pragma omp parallel for num_threads(nthread) schedule(static)
+  #pragma omp parallel for num_threads(nthread) schedule(guided)
   for (bst_omp_uint i = 0; i < nrows - rest; i += K) {
     const bst_omp_uint tid = omp_get_thread_num();
     const size_t off = tid * nbins_;
