@@ -26,15 +26,12 @@ xgb.DMatrix <- function(data, info = list(), missing = NA, silent = FALSE, ...) 
     if (length(data) > 1)
       stop("'data' has class 'character' and length ", length(data),
            ".\n  'data' accepts either a numeric matrix or a single filename.")
-    handle <- .Call("XGDMatrixCreateFromFile_R", data, as.integer(silent),
-                    PACKAGE = "xgboost")
+    handle <- .Call(XGDMatrixCreateFromFile_R, data, as.integer(silent))
   } else if (is.matrix(data)) {
-    handle <- .Call("XGDMatrixCreateFromMat_R", data, missing,
-                    PACKAGE = "xgboost")
+    handle <- .Call(XGDMatrixCreateFromMat_R, data, missing)
     cnames <- colnames(data)
   } else if (inherits(data, "dgCMatrix")) {
-    handle <- .Call("XGDMatrixCreateFromCSC_R", data@p, data@i, data@x, nrow(data),
-                    PACKAGE = "xgboost")
+    handle <- .Call(XGDMatrixCreateFromCSC_R, data@p, data@i, data@x, nrow(data))
     cnames <- colnames(data)
   } else {
     stop("xgb.DMatrix does not support construction from ", typeof(data))
@@ -100,8 +97,7 @@ xgb.get.DMatrix <- function(data, label = NULL, missing = NA, weight = NULL) {
 #' 
 #' @export
 dim.xgb.DMatrix <- function(x) {
-  c(.Call("XGDMatrixNumRow_R", x, PACKAGE = "xgboost"),
-    .Call("XGDMatrixNumCol_R", x, PACKAGE = "xgboost"))
+  c(.Call(XGDMatrixNumRow_R, x), .Call(XGDMatrixNumCol_R, x))
 }
 
 
@@ -167,7 +163,10 @@ dimnames.xgb.DMatrix <- function(x) {
 #'     \item \code{weight}: to do a weight rescale ;
 #'     \item \code{base_margin}: base margin is the base prediction Xgboost will boost from ;
 #'     \item \code{nrow}: number of rows of the \code{xgb.DMatrix}.
+#'     
 #' }
+#' 
+#' \code{group} can be setup by \code{setinfo} but can't be retrieved by \code{getinfo}.
 #' 
 #' @examples
 #' data(agaricus.train, package='xgboost')
@@ -193,7 +192,7 @@ getinfo.xgb.DMatrix <- function(object, name, ...) {
          "    'label', 'weight', 'base_margin', 'nrow'")
   }
   if (name != "nrow"){
-    ret <- .Call("XGDMatrixGetInfo_R", object, name, PACKAGE = "xgboost")
+    ret <- .Call(XGDMatrixGetInfo_R, object, name)
   } else {
     ret <- nrow(object)
   }
@@ -218,7 +217,7 @@ getinfo.xgb.DMatrix <- function(object, name, ...) {
 #'     \item \code{label}: label Xgboost learn from ;
 #'     \item \code{weight}: to do a weight rescale ;
 #'     \item \code{base_margin}: base margin is the base prediction Xgboost will boost from ;
-#'     \item \code{group}.
+#'     \item \code{group}: number of rows in each group (to use with \code{rank:pairwise} objective).
 #' }
 #' 
 #' @examples
@@ -240,29 +239,25 @@ setinfo.xgb.DMatrix <- function(object, name, info, ...) {
   if (name == "label") {
     if (length(info) != nrow(object))
       stop("The length of labels must equal to the number of rows in the input data")
-    .Call("XGDMatrixSetInfo_R", object, name, as.numeric(info),
-          PACKAGE = "xgboost")
+    .Call(XGDMatrixSetInfo_R, object, name, as.numeric(info))
     return(TRUE)
   }
   if (name == "weight") {
     if (length(info) != nrow(object))
       stop("The length of weights must equal to the number of rows in the input data")
-    .Call("XGDMatrixSetInfo_R", object, name, as.numeric(info),
-          PACKAGE = "xgboost")
+    .Call(XGDMatrixSetInfo_R, object, name, as.numeric(info))
     return(TRUE)
   }
   if (name == "base_margin") {
     # if (length(info)!=nrow(object))
     #   stop("The length of base margin must equal to the number of rows in the input data")
-    .Call("XGDMatrixSetInfo_R", object, name, as.numeric(info),
-          PACKAGE = "xgboost")
+    .Call(XGDMatrixSetInfo_R, object, name, as.numeric(info))
     return(TRUE)
   }
   if (name == "group") {
     if (sum(info) != nrow(object))
       stop("The sum of groups must equal to the number of rows in the input data")
-    .Call("XGDMatrixSetInfo_R", object, name, as.integer(info),
-          PACKAGE = "xgboost")
+    .Call(XGDMatrixSetInfo_R, object, name, as.integer(info))
     return(TRUE)
   }
   stop("setinfo: unknown info name ", name)
@@ -302,7 +297,7 @@ slice.xgb.DMatrix <- function(object, idxset, ...) {
   if (!inherits(object, "xgb.DMatrix")) {
     stop("object must be xgb.DMatrix")
   }
-  ret <- .Call("XGDMatrixSliceDMatrix_R", object, idxset, PACKAGE = "xgboost")
+  ret <- .Call(XGDMatrixSliceDMatrix_R, object, idxset)
 
   attr_list <- attributes(object)
   nr <- nrow(object)
@@ -310,7 +305,7 @@ slice.xgb.DMatrix <- function(object, idxset, ...) {
   ind <- which(len == nr)
   if (length(ind) > 0) {
     nms <- names(attr_list)[ind]
-    for (i in 1:length(ind)) {
+    for (i in seq_along(ind)) {
       attr(ret, nms[i]) <- attr(object, nms[i])[idxset]
     }
   }

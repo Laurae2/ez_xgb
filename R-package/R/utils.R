@@ -130,12 +130,11 @@ xgb.iter.update <- function(booster_handle, dtrain, iter, obj = NULL) {
   }
 
   if (is.null(obj)) {
-    .Call("XGBoosterUpdateOneIter_R", booster_handle, as.integer(iter), dtrain,
-          PACKAGE = "xgboost")
+    .Call(XGBoosterUpdateOneIter_R, booster_handle, as.integer(iter), dtrain)
   } else {
     pred <- predict(booster_handle, dtrain)
     gpair <- obj(pred, dtrain)
-    .Call("XGBoosterBoostOneIter_R", booster_handle, dtrain, gpair$grad, gpair$hess, PACKAGE = "xgboost")
+    .Call(XGBoosterBoostOneIter_R, booster_handle, dtrain, gpair$grad, gpair$hess)
   }
   return(TRUE)
 }
@@ -153,8 +152,7 @@ xgb.iter.eval <- function(booster_handle, watchlist, iter, feval = NULL) {
   
   evnames <- names(watchlist)
   if (is.null(feval)) {
-    msg <- .Call("XGBoosterEvalOneIter_R", booster_handle, as.integer(iter), watchlist,
-                 as.list(evnames), PACKAGE = "xgboost")
+    msg <- .Call(XGBoosterEvalOneIter_R, booster_handle, as.integer(iter), watchlist, as.list(evnames))
     msg <- stri_split_regex(msg, '(\\s+|:|\\s+)')[[1]][-1]
     res <- as.numeric(msg[c(FALSE,TRUE)]) # even indices are the values
     names(res) <- msg[c(TRUE,FALSE)]      # odds are the names
@@ -187,7 +185,7 @@ generate.cv.folds <- function(nfold, nrows, stratified, label, params) {
          "\tConsider providing pre-computed CV-folds through the 'folds=' parameter.\n")
   }
   # shuffle
-  rnd_idx <- sample(1:nrows)
+  rnd_idx <- sample.int(nrows)
   if (stratified &&
       length(label) == length(rnd_idx)) {
     y <- label[rnd_idx]
@@ -213,9 +211,9 @@ generate.cv.folds <- function(nfold, nrows, stratified, label, params) {
     # make simple non-stratified folds
     kstep <- length(rnd_idx) %/% nfold
     folds <- list()
-    for (i in 1:(nfold - 1)) {
-      folds[[i]] <- rnd_idx[1:kstep]
-      rnd_idx <- rnd_idx[-(1:kstep)]
+    for (i in seq_len(nfold - 1)) {
+      folds[[i]] <- rnd_idx[seq_len(kstep)]
+      rnd_idx <- rnd_idx[-seq_len(kstep)]
     }
     folds[[nfold]] <- rnd_idx
   }
@@ -256,15 +254,15 @@ xgb.createFolds <- function(y, k = 10)
     ## For each class, balance the fold allocation as far
     ## as possible, then resample the remainder.
     ## The final assignment of folds is also randomized.
-    for (i in 1:length(numInClass)) {
+    for (i in seq_along(numInClass)) {
       ## create a vector of integers from 1:k as many times as possible without
       ## going over the number of samples in the class. Note that if the number
       ## of samples in a class is less than k, nothing is producd here.
-      seqVector <- rep(1:k, numInClass[i] %/% k)
+      seqVector <- rep(seq_len(k), numInClass[i] %/% k)
       ## add enough random integers to get  length(seqVector) == numInClass[i]
-      if (numInClass[i] %% k > 0) seqVector <- c(seqVector, sample(1:k, numInClass[i] %% k))
+      if (numInClass[i] %% k > 0) seqVector <- c(seqVector, sample.int(k, numInClass[i] %% k))
       ## shuffle the integers for fold assignment and assign to this classes's data
-      foldVector[which(y == dimnames(numInClass)$y[i])] <- sample(seqVector)
+      foldVector[y == dimnames(numInClass)$y[i]] <- sample(seqVector)
     }
   } else {
     foldVector <- seq(along = y)
