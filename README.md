@@ -6,7 +6,7 @@ This is a version of xgboost **maintained by Laurae** for easy installation for 
 **Install in R easily in ONE command**:
 
 ```r
-devtools::install_github("Laurae2/ez_xgb/R-package@2017-07-09-v3")
+devtools::install_github("Laurae2/ez_xgb/R-package@2017-07-24-v3")
 ```
 
 ---

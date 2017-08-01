@@ -2,11 +2,13 @@
  * Copyright 2017 XGBoost contributors
  */
 #pragma once
+#include <dmlc/logging.h>
+#include <thrust/binary_search.h>
 #include <thrust/device_vector.h>
 #include <thrust/random.h>
 #include <thrust/system/cuda/error.h>
+#include <thrust/system/cuda/execution_policy.h>
 #include <thrust/system_error.h>
-#include "nccl.h"
 #include <algorithm>
 #include <chrono>
 #include <ctime>
@@ -15,7 +17,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
+#include "nccl.h"
 
 // Uncomment to enable
 // #define DEVICE_TIMER
@@ -121,87 +123,6 @@ inline int get_device_idx(int gpu_id) {
  *  Timers
  */
 
-#define MAX_WARPS 32  // Maximum number of warps to time
-#define MAX_SLOTS 10
-#define TIMER_BLOCKID 0  // Block to time
-struct DeviceTimerGlobal {
-#ifdef DEVICE_TIMER
-
-  clock_t total_clocks[MAX_SLOTS][MAX_WARPS];
-  int64_t count[MAX_SLOTS][MAX_WARPS];
-
-#endif
-
-  // Clear device memory. Call at start of kernel.
-  __device__ void Init() {
-#ifdef DEVICE_TIMER
-    if (blockIdx.x == TIMER_BLOCKID && threadIdx.x < MAX_WARPS) {
-      for (int SLOT = 0; SLOT < MAX_SLOTS; SLOT++) {
-        total_clocks[SLOT][threadIdx.x] = 0;
-        count[SLOT][threadIdx.x] = 0;
-      }
-    }
-#endif
-  }
-
-  void HostPrint() {
-#ifdef DEVICE_TIMER
-    DeviceTimerGlobal h_timer;
-    safe_cuda(
-        cudaMemcpyFromSymbol(&h_timer, (*this), sizeof(DeviceTimerGlobal)));
-
-    for (int SLOT = 0; SLOT < MAX_SLOTS; SLOT++) {
-      if (h_timer.count[SLOT][0] == 0) {
-        continue;
-      }
-
-      clock_t sum_clocks = 0;
-      int64_t sum_count = 0;
-
-      for (int WARP = 0; WARP < MAX_WARPS; WARP++) {
-        if (h_timer.count[SLOT][WARP] == 0) {
-          continue;
-        }
-
-        sum_clocks += h_timer.total_clocks[SLOT][WARP];
-        sum_count += h_timer.count[SLOT][WARP];
-      }
-
-      printf("Slot %d: %d clocks per call, called %d times.\n", SLOT,
-             sum_clocks / sum_count, h_timer.count[SLOT][0]);
-    }
-#endif
-  }
-};
-
-struct DeviceTimer {
-#ifdef DEVICE_TIMER
-  clock_t start;
-  int slot;
-  DeviceTimerGlobal &GTimer;
-#endif
-
-#ifdef DEVICE_TIMER
-  __device__ DeviceTimer(DeviceTimerGlobal &GTimer, int slot)  // NOLINT
-      : GTimer(GTimer),
-        start(clock()),
-        slot(slot) {}
-#else
-  __device__ DeviceTimer(DeviceTimerGlobal &GTimer, int slot) {}  // NOLINT
-#endif
-
-  __device__ void End() {
-#ifdef DEVICE_TIMER
-    int warp_id = threadIdx.x / 32;
-    int lane_id = threadIdx.x % 32;
-    if (blockIdx.x == TIMER_BLOCKID && lane_id == 0) {
-      GTimer.count[slot][warp_id] += 1;
-      GTimer.total_clocks[slot][warp_id] += clock() - start;
-    }
-#endif
-  }
-};
-
 struct Timer {
   typedef std::chrono::high_resolution_clock ClockT;
 
@@ -211,9 +132,12 @@ struct Timer {
 
   void reset() { start = ClockT::now(); }
   int64_t elapsed() const { return (ClockT::now() - start).count(); }
+  double elapsedSeconds() const {
+    return elapsed() * ((double)ClockT::period::num / ClockT::period::den);
+  }
   void printElapsed(std::string label) {
     //    synchronize_n_devices(n_devices, dList);
-    printf("%s:\t %lld\n", label.c_str(), elapsed());
+    printf("%s:\t %fs\n", label.c_str(), elapsedSeconds());
     reset();
   }
 };
@@ -517,7 +441,7 @@ class bulk_allocator {
 
  public:
   ~bulk_allocator() {
-    for (int i = 0; i < d_ptr.size(); i++) {
+    for (size_t i = 0; i < d_ptr.size(); i++) {
       if (!(d_ptr[i] == nullptr)) {
         safe_cuda(cudaSetDevice(_device_idx[i]));
         safe_cuda(cudaFree(d_ptr[i]));
@@ -549,22 +473,35 @@ struct CubMemory {
   void *d_temp_storage;
   size_t temp_storage_bytes;
 
+  // Thrust
+  typedef char value_type;
+
   CubMemory() : d_temp_storage(NULL), temp_storage_bytes(0) {}
 
   ~CubMemory() { Free(); }
 
   void Free() {
-    if (d_temp_storage != NULL) {
+    if (this->IsAllocated()) {
       safe_cuda(cudaFree(d_temp_storage));
     }
   }
 
-  void LazyAllocate(size_t n_bytes) {
-    if (n_bytes > temp_storage_bytes) {
+  void LazyAllocate(size_t num_bytes) {
+    if (num_bytes > temp_storage_bytes) {
       Free();
-      safe_cuda(cudaMalloc(&d_temp_storage, n_bytes));
-      temp_storage_bytes = n_bytes;
+      safe_cuda(cudaMalloc(&d_temp_storage, num_bytes));
+      temp_storage_bytes = num_bytes;
     }
+  }
+  // Thrust
+  char *allocate(std::ptrdiff_t num_bytes) {
+    LazyAllocate(num_bytes);
+    return reinterpret_cast<char *>(d_temp_storage);
+  }
+
+  // Thrust
+  void deallocate(char *ptr, size_t n) {
+    // Do nothing
   }
 
   bool IsAllocated() { return d_temp_storage != NULL; }
@@ -585,16 +522,16 @@ inline size_t available_memory(int device_idx) {
 template <typename T>
 void print(const thrust::device_vector<T> &v, size_t max_items = 10) {
   thrust::host_vector<T> h = v;
-  for (int i = 0; i < std::min(max_items, h.size()); i++) {
+  for (size_t i = 0; i < std::min(max_items, h.size()); i++) {
     std::cout << " " << h[i];
   }
   std::cout << "\n";
 }
 
-template <typename T, memory_type MemoryT>
+template <typename T>
 void print(const dvec<T> &v, size_t max_items = 10) {
   std::vector<T> h = v.as_vector();
-  for (int i = 0; i < std::min(max_items, h.size()); i++) {
+  for (size_t i = 0; i < std::min(max_items, h.size()); i++) {
     std::cout << " " << h[i];
   }
   std::cout << "\n";
@@ -602,10 +539,10 @@ void print(const dvec<T> &v, size_t max_items = 10) {
 
 template <typename T>
 void print(char *label, const thrust::device_vector<T> &v,
-           const char *format = "%d ", int max = 10) {
+           const char *format = "%d ", size_t max = 10) {
   thrust::host_vector<T> h_v = v;
   std::cout << label << ":\n";
-  for (int i = 0; i < std::min(static_cast<int>(h_v.size()), max); i++) {
+  for (size_t i = 0; i < std::min(static_cast<size_t>(h_v.size()), max); i++) {
     printf(format, h_v[i]);
   }
   std::cout << "\n";
@@ -656,6 +593,7 @@ __global__ void launch_n_kernel(int device_idx, size_t begin, size_t end,
 template <int ITEMS_PER_THREAD = 8, int BLOCK_THREADS = 256, typename L>
 inline void launch_n(int device_idx, size_t n, L lambda) {
   safe_cuda(cudaSetDevice(device_idx));
+  // TODO: Template on n so GRID_SIZE always fits into int.
   const int GRID_SIZE = div_round_up(n, ITEMS_PER_THREAD * BLOCK_THREADS);
 #if defined(__CUDACC__)
   launch_n_kernel<<<GRID_SIZE, BLOCK_THREADS>>>(static_cast<size_t>(0), n,
@@ -670,6 +608,7 @@ inline void multi_launch_n(size_t n, int n_devices, L lambda) {
   CHECK_LE(n_devices, n_visible_devices()) << "Number of devices requested "
                                               "needs to be less than equal to "
                                               "number of visible devices.";
+  // TODO: Template on n so GRID_SIZE always fits into int.
   const int GRID_SIZE = div_round_up(n, ITEMS_PER_THREAD * BLOCK_THREADS);
 #if defined(__CUDACC__)
   n_devices = n_devices > n ? n : n_devices;
@@ -713,5 +652,127 @@ struct BernoulliRng {
     call;                     \
     t1234.printElapsed(name); \
   } while (0)
+
+// Load balancing search
+
+template <typename coordinate_t, typename segments_t, typename offset_t>
+void FindMergePartitions(int device_idx, coordinate_t *d_tile_coordinates, int num_tiles,
+                         int tile_size, segments_t segments, offset_t num_rows,
+                         offset_t num_elements) {
+  dh::launch_n(device_idx, num_tiles + 1, [=] __device__(int idx) {
+    offset_t diagonal = idx * tile_size;
+    coordinate_t tile_coordinate;
+    cub::CountingInputIterator<offset_t> nonzero_indices(0);
+
+    // Search the merge path
+    // Cast to signed integer as this function can have negatives
+    cub::MergePathSearch(static_cast<int64_t>(diagonal), segments + 1,
+                         nonzero_indices, static_cast<int64_t>(num_rows),
+                         static_cast<int64_t>(num_elements), tile_coordinate);
+
+    // Output starting offset
+    d_tile_coordinates[idx] = tile_coordinate;
+  });
+}
+
+template <int TILE_SIZE, int ITEMS_PER_THREAD, int BLOCK_THREADS,
+          typename offset_t, typename coordinate_t, typename func_t,
+          typename segments_iter>
+__global__ void LbsKernel(coordinate_t *d_coordinates,
+                          segments_iter segment_end_offsets, func_t f,
+                          offset_t num_segments) {
+  int tile = blockIdx.x;
+  coordinate_t tile_start_coord = d_coordinates[tile];
+  coordinate_t tile_end_coord = d_coordinates[tile + 1];
+  int64_t tile_num_rows = tile_end_coord.x - tile_start_coord.x;
+  int64_t tile_num_elements = tile_end_coord.y - tile_start_coord.y;
+
+  cub::CountingInputIterator<offset_t> tile_element_indices(tile_start_coord.y);
+  coordinate_t thread_start_coord;
+
+  typedef typename std::iterator_traits<segments_iter>::value_type segment_t;
+  __shared__ struct {
+    segment_t tile_segment_end_offsets[TILE_SIZE + 1];
+    segment_t output_segment[TILE_SIZE];
+  } temp_storage;
+
+  for (auto item : dh::block_stride_range(int(0), int(tile_num_rows + 1))) {
+    temp_storage.tile_segment_end_offsets[item] =
+        segment_end_offsets[min(tile_start_coord.x + item, num_segments - 1)];
+  }
+  __syncthreads();
+
+  int64_t diag = threadIdx.x * ITEMS_PER_THREAD;
+
+  // Cast to signed integer as this function can have negatives
+  cub::MergePathSearch(diag,                                   // Diagonal
+                       temp_storage.tile_segment_end_offsets,  // List A
+                       tile_element_indices,                   // List B
+                       tile_num_rows, tile_num_elements, thread_start_coord);
+
+  coordinate_t thread_current_coord = thread_start_coord;
+#pragma unroll
+  for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM) {
+    if (tile_element_indices[thread_current_coord.y] <
+        temp_storage.tile_segment_end_offsets[thread_current_coord.x]) {
+      temp_storage.output_segment[thread_current_coord.y] =
+          thread_current_coord.x + tile_start_coord.x;
+      ++thread_current_coord.y;
+    } else {
+      ++thread_current_coord.x;
+    }
+  }
+  __syncthreads();
+
+  for (auto item : dh::block_stride_range(int(0), int(tile_num_elements))) {
+    f(tile_start_coord.y + item, temp_storage.output_segment[item]);
+  }
+}
+
+/**
+ * \fn  template <typename func_t, typename segments_iter, typename offset_t>
+ * void TransformLbs(int device_idx, dh::CubMemory *temp_memory, offset_t count,
+ * segments_iter segments, offset_t num_segments, func_t f)
+ *
+ * \brief Load balancing search function. Reads a CSR type matrix description
+ * and allows a function to be executed on each element. Search 'modern GPU load
+ * balancing search' for more information.
+ *
+ * \author  Rory
+ * \date  7/9/2017
+ *
+ * \tparam  func_t        Type of the function t.
+ * \tparam  segments_iter Type of the segments iterator.
+ * \tparam  offset_t      Type of the offset.
+ * \tparam  segments_t    Type of the segments t.
+ * \param           device_idx    Zero-based index of the device.
+ * \param [in,out]  temp_memory   Temporary memory allocator.
+ * \param           count         Number of elements.
+ * \param           segments      Device pointer to segments.
+ * \param           num_segments  Number of segments.
+ * \param           f             Lambda to be executed on matrix elements.
+ */
+
+template <typename func_t, typename segments_iter, typename offset_t>
+void TransformLbs(int device_idx, dh::CubMemory *temp_memory, offset_t count,
+                  segments_iter segments, offset_t num_segments, func_t f) {
+  typedef typename cub::CubVector<offset_t, 2>::Type coordinate_t;
+  dh::safe_cuda(cudaSetDevice(device_idx));
+  const int BLOCK_THREADS = 256;
+  const int ITEMS_PER_THREAD = 1;
+  const int TILE_SIZE = BLOCK_THREADS * ITEMS_PER_THREAD;
+  int num_tiles = dh::div_round_up(count + num_segments, BLOCK_THREADS);
+
+  temp_memory->LazyAllocate(sizeof(coordinate_t) * (num_tiles + 1));
+  coordinate_t *tmp_tile_coordinates =
+      reinterpret_cast<coordinate_t *>(temp_memory->d_temp_storage);
+
+  FindMergePartitions(device_idx, tmp_tile_coordinates, num_tiles, BLOCK_THREADS, segments,
+                      num_segments, count);
+
+  LbsKernel<TILE_SIZE, ITEMS_PER_THREAD, BLOCK_THREADS, offset_t>
+      <<<num_tiles, BLOCK_THREADS>>>(tmp_tile_coordinates, segments + 1, f,
+                                     num_segments);
+}
 
 }  // namespace dh

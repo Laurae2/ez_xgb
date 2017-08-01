@@ -20,10 +20,9 @@ import java.nio.file.Files
 import java.util.concurrent.LinkedBlockingDeque
 
 import scala.collection.mutable.ListBuffer
-import scala.io.Source
 import scala.util.Random
 
-import ml.dmlc.xgboost4j.java.{Rabit, DMatrix => JDMatrix}
+import ml.dmlc.xgboost4j.java.Rabit
 import ml.dmlc.xgboost4j.scala.DMatrix
 import ml.dmlc.xgboost4j.scala.rabit.RabitTracker
 
@@ -31,8 +30,9 @@ import org.apache.spark.SparkContext
 import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.linalg.{Vectors, Vector => SparkVector}
 import org.apache.spark.rdd.RDD
+import org.scalatest.FunSuite
 
-class XGBoostGeneralSuite extends SharedSparkContext with Utils {
+class XGBoostGeneralSuite extends FunSuite with PerTest {
   test("test Rabit allreduce to validate Scala-implemented Rabit tracker") {
     val vectorLength = 100
     val rdd = sc.parallelize(
@@ -75,7 +75,7 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
   }
 
   test("build RDD containing boosters with the specified worker number") {
-    val trainingRDD = buildTrainingRDD(sc)
+    val trainingRDD = sc.parallelize(Classification.train)
     val boosterRDD = XGBoost.buildDistributedBoosters(
       trainingRDD,
       List("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
@@ -85,31 +85,26 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
       missing = Float.NaN, baseMargin = null)
     val boosterCount = boosterRDD.count()
     assert(boosterCount === 2)
-    cleanExternalCache("XGBoostSuite")
   }
 
   test("training with external memory cache") {
     val eval = new EvalError()
-    val trainingRDD = buildTrainingRDD(sc)
-    val testSet = loadLabelPoints(getClass.getResource("/agaricus.txt.test").getFile).iterator
+    val trainingRDD = sc.parallelize(Classification.train)
     import DataUtils._
-    val testSetDMatrix = new DMatrix(new JDMatrix(testSet, null))
+    val testSetDMatrix = new DMatrix(Classification.test.iterator)
     val paramMap = List("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
       "objective" -> "binary:logistic").toMap
     val xgBoostModel = XGBoost.trainWithRDD(trainingRDD, paramMap, round = 5,
       nWorkers = numWorkers, useExternalMemory = true)
     assert(eval.eval(xgBoostModel.booster.predict(testSetDMatrix, outPutMargin = true),
       testSetDMatrix) < 0.1)
-    // clean
-    cleanExternalCache("XGBoostSuite")
   }
 
   test("training with Scala-implemented Rabit tracker") {
     val eval = new EvalError()
-    val trainingRDD = buildTrainingRDD(sc)
-    val testSet = loadLabelPoints(getClass.getResource("/agaricus.txt.test").getFile).iterator
+    val trainingRDD = sc.parallelize(Classification.train)
     import DataUtils._
-    val testSetDMatrix = new DMatrix(new JDMatrix(testSet, null))
+    val testSetDMatrix = new DMatrix(Classification.test.iterator)
     val paramMap = List("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
       "objective" -> "binary:logistic",
       "tracker_conf" -> TrackerConf(60 * 60 * 1000, "scala")).toMap
@@ -121,10 +116,9 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
 
   ignore("test with fast histo depthwise") {
     val eval = new EvalError()
-    val trainingRDD = buildTrainingRDD(sc)
-    val testSet = loadLabelPoints(getClass.getResource("/agaricus.txt.test").getFile).iterator
+    val trainingRDD = sc.parallelize(Classification.train)
     import DataUtils._
-    val testSetDMatrix = new DMatrix(new JDMatrix(testSet, null))
+    val testSetDMatrix = new DMatrix(Classification.test.iterator)
     val paramMap = Map("eta" -> "1", "gamma" -> "0.5", "max_depth" -> "6", "silent" -> "1",
       "objective" -> "binary:logistic", "tree_method" -> "hist",
       "grow_policy" -> "depthwise", "eval_metric" -> "error")
@@ -137,10 +131,9 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
 
   ignore("test with fast histo lossguide") {
     val eval = new EvalError()
-    val trainingRDD = buildTrainingRDD(sc)
-    val testSet = loadLabelPoints(getClass.getResource("/agaricus.txt.test").getFile).iterator
+    val trainingRDD = sc.parallelize(Classification.train)
     import DataUtils._
-    val testSetDMatrix = new DMatrix(new JDMatrix(testSet, null))
+    val testSetDMatrix = new DMatrix(Classification.test.iterator)
     val paramMap = Map("eta" -> "1", "gamma" -> "0.5", "max_depth" -> "0", "silent" -> "1",
             "objective" -> "binary:logistic", "tree_method" -> "hist",
             "grow_policy" -> "lossguide", "max_leaves" -> "8", "eval_metric" -> "error")
@@ -153,10 +146,9 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
 
   ignore("test with fast histo lossguide with max bin") {
     val eval = new EvalError()
-    val trainingRDD = buildTrainingRDD(sc)
-    val testSet = loadLabelPoints(getClass.getResource("/agaricus.txt.test").getFile).iterator
+    val trainingRDD = sc.parallelize(Classification.train)
     import DataUtils._
-    val testSetDMatrix = new DMatrix(new JDMatrix(testSet, null))
+    val testSetDMatrix = new DMatrix(Classification.test.iterator)
     val paramMap = Map("eta" -> "1", "gamma" -> "0.5", "max_depth" -> "0", "silent" -> "0",
             "objective" -> "binary:logistic", "tree_method" -> "hist",
             "grow_policy" -> "lossguide", "max_leaves" -> "8", "max_bin" -> "16",
@@ -170,10 +162,9 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
 
   ignore("test with fast histo depthwidth with max depth") {
     val eval = new EvalError()
-    val trainingRDD = buildTrainingRDD(sc)
-    val testSet = loadLabelPoints(getClass.getResource("/agaricus.txt.test").getFile).iterator
+    val trainingRDD = sc.parallelize(Classification.train)
     import DataUtils._
-    val testSetDMatrix = new DMatrix(new JDMatrix(testSet, null))
+    val testSetDMatrix = new DMatrix(Classification.test.iterator)
     val paramMap = Map("eta" -> "1", "gamma" -> "0.5", "max_depth" -> "0", "silent" -> "0",
       "objective" -> "binary:logistic", "tree_method" -> "hist",
       "grow_policy" -> "depthwise", "max_leaves" -> "8", "max_depth" -> "2",
@@ -187,10 +178,9 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
 
   ignore("test with fast histo depthwidth with max depth and max bin") {
     val eval = new EvalError()
-    val trainingRDD = buildTrainingRDD(sc)
-    val testSet = loadLabelPoints(getClass.getResource("/agaricus.txt.test").getFile).iterator
+    val trainingRDD = sc.parallelize(Classification.train)
     import DataUtils._
-    val testSetDMatrix = new DMatrix(new JDMatrix(testSet, null))
+    val testSetDMatrix = new DMatrix(Classification.test.iterator)
     val paramMap = Map("eta" -> "1", "gamma" -> "0.5", "max_depth" -> "0", "silent" -> "0",
             "objective" -> "binary:logistic", "tree_method" -> "hist",
             "grow_policy" -> "depthwise", "max_depth" -> "2", "max_bin" -> "2",
@@ -204,29 +194,19 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
 
   test("test with dense vectors containing missing value") {
     def buildDenseRDD(): RDD[LabeledPoint] = {
-      val nrow = 100
-      val ncol = 5
-      val data0 = Array.ofDim[Double](nrow, ncol)
-      // put random nums
-      for (r <- 0 until nrow; c <- 0 until ncol) {
-        data0(r)(c) = {
-          if (c == ncol - 1) {
-            -0.1
-          } else {
-            Random.nextDouble()
-          }
+      val numRows = 100
+      val numCols = 5
+
+      val labeledPoints = (0 until numRows).map { _ =>
+        val label = Random.nextDouble()
+        val values = Array.tabulate[Double](numCols) { c =>
+          if (c == numCols - 1) -0.1 else Random.nextDouble()
         }
+
+        LabeledPoint(label, Vectors.dense(values))
       }
-      // create label
-      val label0 = new Array[Double](nrow)
-      for (i <- label0.indices) {
-        label0(i) = Random.nextDouble()
-      }
-      val points = new ListBuffer[LabeledPoint]
-      for (r <- 0 until nrow) {
-        points += LabeledPoint(label0(r), Vectors.dense(data0(r)))
-      }
-      sc.parallelize(points)
+
+      sc.parallelize(labeledPoints)
     }
 
     val trainingRDD = buildDenseRDD().repartition(4)
@@ -236,13 +216,11 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
     val xgBoostModel = XGBoost.trainWithRDD(trainingRDD, paramMap, 5, numWorkers,
       useExternalMemory = true)
     xgBoostModel.predict(testRDD.map(_.features.toDense), missingValue = -0.1f).collect()
-    // clean
-    cleanExternalCache("XGBoostSuite")
   }
 
   test("test consistency of prediction functions with RDD") {
-    val trainingRDD = buildTrainingRDD(sc)
-    val testSet = loadLabelPoints(getClass.getResource("/agaricus.txt.test").getFile)
+    val trainingRDD = sc.parallelize(Classification.train)
+    val testSet = Classification.test
     val testRDD = sc.parallelize(testSet, numSlices = 1).map(_.features)
     val testCollection = testRDD.collect()
     for (i <- testSet.indices) {
@@ -262,7 +240,7 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
   }
 
   test("test eval functions with RDD") {
-    val trainingRDD = buildTrainingRDD(sc).cache()
+    val trainingRDD = sc.parallelize(Classification.train).cache()
     val paramMap = Map("eta" -> "1", "max_depth" -> "2", "silent" -> "1",
       "objective" -> "binary:logistic")
     val xgBoostModel = XGBoost.trainWithRDD(trainingRDD, paramMap, round = 5, nWorkers = numWorkers)
@@ -276,7 +254,7 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
       sparkContext.getOrElse(sc).parallelize(List[SparkVector](), numWorkers)
     }
 
-    val trainingRDD = buildTrainingRDD(sc)
+    val trainingRDD = sc.parallelize(Classification.train)
     val testRDD = buildEmptyRDD()
     val paramMap = List("eta" -> "1", "max_depth" -> "2", "silent" -> "1",
       "objective" -> "binary:logistic").toMap
@@ -286,10 +264,9 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
 
   test("test model consistency after save and load") {
     val eval = new EvalError()
-    val trainingRDD = buildTrainingRDD(sc)
-    val testSet = loadLabelPoints(getClass.getResource("/agaricus.txt.test").getFile).iterator
+    val trainingRDD = sc.parallelize(Classification.train)
     import DataUtils._
-    val testSetDMatrix = new DMatrix(new JDMatrix(testSet, null))
+    val testSetDMatrix = new DMatrix(Classification.test.iterator)
     val tempDir = Files.createTempDirectory("xgboosttest-")
     val tempFile = Files.createTempFile(tempDir, "", "")
     val paramMap = Map("eta" -> "1", "max_depth" -> "2", "silent" -> "1",
@@ -308,7 +285,7 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
   test("test save and load of different types of models") {
     val tempDir = Files.createTempDirectory("xgboosttest-")
     val tempFile = Files.createTempFile(tempDir, "", "")
-    val trainingRDD = buildTrainingRDD(sc)
+    val trainingRDD = sc.parallelize(Classification.train)
     var paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
       "objective" -> "reg:linear")
     // validate regression model
@@ -343,12 +320,9 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
   }
 
   test("test use groupData") {
-    val trainSet = loadLabelPoints(getClass.getResource("/rank-demo-0.txt.train").getFile)
-    val trainingRDD = sc.parallelize(trainSet, numSlices = 1)
-    val trainGroupData: Seq[Seq[Int]] = Seq(Source.fromFile(
-      getClass.getResource("/rank-demo-0.txt.train.group").getFile).getLines().map(_.toInt).toList)
-    val testSet = loadLabelPoints(getClass.getResource("/rank-demo.txt.test").getFile)
-    val testRDD = sc.parallelize(testSet, numSlices = 1).map(_.features)
+    val trainingRDD = sc.parallelize(Ranking.train0, numSlices = 1)
+    val trainGroupData: Seq[Seq[Int]] = Seq(Ranking.trainGroup0)
+    val testRDD = sc.parallelize(Ranking.test, numSlices = 1).map(_.features)
 
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
       "objective" -> "rank:pairwise", "eval_metric" -> "ndcg", "groupData" -> trainGroupData)
@@ -363,20 +337,13 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
   }
 
   test("test use nested groupData") {
-    val trainSet0 = loadLabelPoints(getClass.getResource("/rank-demo-0.txt.train").getFile)
-    val trainingRDD0 = sc.parallelize(trainSet0, numSlices = 1)
-    val trainSet1 = loadLabelPoints(getClass.getResource("/rank-demo-1.txt.train").getFile)
-    val trainingRDD1 = sc.parallelize(trainSet1, numSlices = 1)
+    val trainingRDD0 = sc.parallelize(Ranking.train0, numSlices = 1)
+    val trainingRDD1 = sc.parallelize(Ranking.train1, numSlices = 1)
     val trainingRDD = trainingRDD0.union(trainingRDD1)
 
-    val trainGroupData0: Seq[Int] = Source.fromFile(
-      getClass.getResource("/rank-demo-0.txt.train.group").getFile).getLines().map(_.toInt).toList
-    val trainGroupData1: Seq[Int] = Source.fromFile(
-      getClass.getResource("/rank-demo-1.txt.train.group").getFile).getLines().map(_.toInt).toList
-    val trainGroupData: Seq[Seq[Int]] = Seq(trainGroupData0, trainGroupData1)
+    val trainGroupData: Seq[Seq[Int]] = Seq(Ranking.trainGroup0, Ranking.trainGroup1)
 
-    val testSet = loadLabelPoints(getClass.getResource("/rank-demo.txt.test").getFile)
-    val testRDD = sc.parallelize(testSet, numSlices = 1).map(_.features)
+    val testRDD = sc.parallelize(Ranking.test, numSlices = 1).map(_.features)
 
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
       "objective" -> "rank:pairwise", "groupData" -> trainGroupData)
@@ -388,11 +355,8 @@ class XGBoostGeneralSuite extends SharedSparkContext with Utils {
   }
 
     test("test use base margin") {
-      val trainSet = loadLabelPoints(getClass.getResource("/rank-demo-0.txt.train").getFile)
-      val trainRDD = sc.parallelize(trainSet, numSlices = 1)
-
-      val testSet = loadLabelPoints(getClass.getResource("/rank-demo.txt.test").getFile)
-      val testRDD = sc.parallelize(testSet, numSlices = 1).map(_.features)
+      val trainRDD = sc.parallelize(Ranking.train0, numSlices = 1)
+      val testRDD = sc.parallelize(Ranking.test, numSlices = 1).map(_.features)
 
       val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
         "objective" -> "rank:pairwise")
