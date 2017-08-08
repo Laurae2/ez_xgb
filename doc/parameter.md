@@ -107,23 +107,6 @@ Parameters for Tree Booster
   - This is only used if 'hist' is specified as `tree_method`.
   - Maximum number of discrete bins to bucket continuous features.
   - Increasing this number improves the optimality of splits at the cost of higher computation time.
-* use_columnar_access, [default=1]
-  - This is only used if 'hist' is specified as `tree_method`.
-  - If greater than zero, store a transposed copy of input matrix for fast columnar access. May increase memory usage and initial setup time.
-* sparse_threshold, [default=0.2]
-  - range: [0.0, 1.0]
-  - This is only used if 'hist' is specified as `tree_method`.
-  - Percentage threshold for treating a feature as sparse. For instance, 0.2 indicates that any feature with fewer than 20% nonzero rows will be considered sparse. May impact computation time slightly.
-* enable_feature_grouping, [default=0]
-  - This is only used if 'hist' is specified as `tree_method`.
-  - If greater than zero, group complementary features together so as to improve work balance for parallel histogram aggregation. May increase memory usage and initial setup time.
-* max_conflict_rate, [default=0]
-  - range: [0.0, 1.0]
-  - Only relevant when `enable_feature_grouping=1` is specified.
-  - Specifies criterion for "complementary" features. By default, only features with no common nonzero rows are considered complementary. Increase this number to encourage larger feature groups.
-* max_search_group, [default=100]
-  - Only relevant when `enable_feature_grouping=1` is specified.
-  - Increasing this number will result in better feature grouping, at the cost of greater initial setup time.
 
 Additional parameters for Dart Booster
 --------------------------------------
