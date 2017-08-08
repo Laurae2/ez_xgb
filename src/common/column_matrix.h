@@ -154,7 +154,7 @@ class ColumnMatrix {
     num_nonzeros.resize(nfeature);
     std::fill(num_nonzeros.begin(), num_nonzeros.end(), 0);
 
-    const int nthread = omp_get_max_threads();
+    const int nthread = 1; // omp_get_max_threads()
     #pragma omp parallel num_threads(nthread)
     {
       for (size_t rid = 0; rid < nrow; ++rid) {
